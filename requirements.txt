@@ -8,7 +8,7 @@
 # pandas
 
 # For Demo Purposes 
-
+flask
 PyPDF2 
 langchain 
 groq 
