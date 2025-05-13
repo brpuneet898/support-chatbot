@@ -25,11 +25,15 @@ def home():
 
 @app.route("/chat", methods=["POST"])
 def get_answer_from_llm():
-    query = request.get_json().get("message")
-    if not query.strip():
-        return jsonify({"response": "Please provide a valid query."}), 400
-    answer = query_model_with_rag(query, vector_store)
-    return jsonify({"response": answer})
+    try:
+        query = request.get_json().get("message")
+        if not query.strip():
+            return jsonify({"response": "Please provide a valid query."}), 400
+        answer = query_model_with_rag(query, vector_store)
+        return jsonify({"response": answer})
+    except Exception as e:
+        print(f"Error: {e}")
+        return jsonify({"response": "Response was not recieved because of an technical issue. Please contact support is issue persists."})
 
 @app.route('/login')
 def login():
@@ -81,3 +85,4 @@ if __name__ == '__main__':
         vector_store = load_vector_store(vector_store_path)
 
     app.run(debug=True)
+    # app.run(host='0.0.0.0', port=80, debug=True)

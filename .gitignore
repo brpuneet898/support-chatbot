@@ -1,6 +1,7 @@
-./env
+env/*
 ./documents
 ./__pycache__
 ./vector_store
 ./*.yaml
 ./TRASH/*
+prompt.txt
