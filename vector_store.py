@@ -103,170 +103,165 @@ def load_vector_store(vector_store_path):
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2") # This is the model that was used to create the vector store
     return FAISS.load_local(vector_store_path, embeddings, allow_dangerous_deserialization=True)
 
-
-def get_similar_queries(query, vector_store, k=5):
-    """
-    Find similar queries from the vector store.
-    """
-    print("\nSearching for queries similar to:", query)
-    
-    # Load embeddings
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    
-    # Get query embedding
-    query_embedding = embeddings.embed_query(query)
-    
-    # Fetch similar documents
-    similar_documents = vector_store.similarity_search_by_vector(query_embedding, k=k)
-    
-    # Extracting queries from the results
-    # print(f"%%%%%%%\n\n{similar_documents[0].page_content}\n\n%%%%%%%%%\n\n")
-    similar_queries = [doc.page_content.strip().replace("\r", "").replace("\n", " ").split("Description")[0] for doc in similar_documents]
-    
-    # Print results in a readable format
-    print(f"\n**Top {k} Similar Queries:**")
-    for i, q in enumerate(similar_queries, 1):
-        print(f"{i}. {q}")
-    
-    return similar_queries
-
-def create_pdf_chunks(pdf_path, chunk_size=200, overlap=50): # This function will be used to chunk the Student Handbook # This function is rejected
-    # Step 1: Convert PDF to text
-    with open(pdf_path, "rb") as file:
-        pdf_reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page_num in range(len(pdf_reader.pages)):
-            page = pdf_reader.pages[page_num]
-            text += page.extract_text() # whole text of the pdf as single string
-
-    # Step 2: Clean up the text
-    """Splits text into sentences using regex."""
-    sentences = re.split(r'(?<=[.?!])\s+', text)  # Split at sentence boundaries
-    cleaned_sentences = []
-    for sent in sentences:
-      sent = sent.replace("\n", " ")  # Replace newlines with spaces
-      sent = re.sub(r'\s+', ' ', sent)  # Replace multiple spaces with a single space
-      cleaned_sentences.append(sent)
-
-    # Step 3: Now we have the whole text of the PDF, create overlapping chunks
-    """Splits a long text into chunks of max `chunk_size` words with `overlap`."""
-    initial_chunks, final_chunks = [], [] # initial_chunks are non-overlapping; final_chunks are overlapping
-    clean_sentences = list(cleaned_sentences)
-    concatenated_text = " ".join(clean_sentences) # Concatenate separated sentences into a single string
-    spaced_list = concatenated_text.split() # Split concatenated text into a list of words
-
-    step = chunk_size - overlap
-    for i in range(0, len(spaced_list), step): # create non-overlapping chunks
-      # print(f"i={i}")
-      initial_chunks.append(spaced_list[i:i + step])
-
-    for i in range(0, len(initial_chunks)-1): # create overlapping chunks
-      temp = list(initial_chunks[i]) # Make a copy
-      # print(f"TEMP = {temp}")
-      temp.extend(initial_chunks[i+1][:overlap])
-      final_chunks.append(' '.join(temp))
-
-    return final_chunks
-
-def clean_string_before_first_alpha(s):
-    # Match the first alphabetical character and everything after it
-    match = re.search(r'[A-Za-z]', s)
-    if match:
-        return s[match.start():]
-    return s  # Return empty string if no alphabet is found
-
-def extract_chunks_for_grading_doc_by_header_without_tables(url):
-    # Step 1: Fetch and clean HTML
-    response = requests.get(url)
-    html = response.text
-    cleaned_html = re.sub(r'<table.*?>.*?</table>', '', html, flags=re.DOTALL | re.IGNORECASE)
-
-    # Step 2: Parse with BeautifulSoup
-    soup = BeautifulSoup(cleaned_html, 'html.parser')
-
-    # Step 3: Extract chunks
-    chunks = {}
-    headers = soup.find_all(['h1', 'h2'])
-
-    for i, header in enumerate(headers):
-        key = header.get_text(strip=True)
-        print(f"Uncleaned key = {key}")
-        key = clean_string_before_first_alpha(key)
-        print(f"cleaned key = {key}")
-        content = []
-
-        # Traverse next siblings until the next header
-        for sibling in header.find_next_siblings():
-            if sibling.name and sibling.name.lower() in ['h1', 'h2']:
-                break
-            text = sibling.get_text(strip=True, separator=' ')
-            if text:
-                content.append(text)
-
-        chunks[key] = ' '.join(content).replace("&nbsp:","").replace("\u00a0","").replace("\u00b7","").replace("\u2014","").replace("\u00a0","").replace("\u2013","")
-    
-    keys_to_remove = ["ASSIGNMENT DEADLINES:","Bonus Marks","Suggested pathway to register and study Foundation level courses:","Diploma Level courses","Suggested pathway to register and study Diploma level courses:","Diploma level courses","Degree Level courses","Annexure I"]
-    for key in chunks.keys():
-        if (key.strip()=="" or chunks[key].strip()=="") and (key not in keys_to_remove):
-            keys_to_remove.append(key)
-
-    for key in keys_to_remove:
-        if key in chunks:
-            chunks.pop(key)
-
-    final_chunks = [f"Grading policy for {key}:\t {value}\n" for key, value in chunks.items()]
-
-    return final_chunks
-
+# HELPER FUNCTIONS
+import re
+import requests
+from bs4 import BeautifulSoup
+from functools import lru_cache
 def remove_unicode_escapes(text):
     # Regex to match \u followed by exactly 4 hexadecimal digits
-    cleaned_text = re.sub(r'\\u[0-9a-fA-F]{4}', '', text)
+    cleaned_text = re.sub(r'\\u[0-9a-fA-F]{4}', '', text).replace("\xa0","")
     return cleaned_text
 
+def strip_html_attributes(html_str):
+    """
+    Remove all attributes from an HTML string.
+    For example, <table class="x" id="y"> becomes <table>.
+    """
+    soup = BeautifulSoup(html_str, "html.parser")
 
-def extract_chunks_for_student_handbook_by_header_without_tables(url):
-    # Step 1: Fetch and clean HTML
+    for tag in soup.find_all(True):  # True matches all tags
+        tag.attrs = {}  # Remove all attributes
+
+    return str(soup).replace("<span>","").replace("</span>","").replace("</p></td>","</td").replace("<p><td>","<td>")
+
+def normalize(text):
+    # Replace any kind of whitespace (space, \xa0, tabs, etc.) with a single space
+    return re.sub(r'\s+', ' ', text.replace('\xa0', ' ').strip())
+
+def html_table_to_json(html_str):
+    soup = BeautifulSoup(html_str, "html.parser")
+    table = soup.find("table")
+    if not table:
+        return []
+
+    # Extract headers
+    headers = []
+    header_row = table.find("tr")
+    if header_row:
+        headers = [th.get_text(strip=True) for th in header_row.find_all(["th", "td"])]
+
+    # Extract rows
+    data = []
+    for row in table.find_all("tr")[1:]:
+        cells = row.find_all(["td", "th"])
+        if not cells:
+            continue
+        row_data = {headers[i] if i < len(headers) else f"col_{i}": cell.get_text(strip=True)
+                    for i, cell in enumerate(cells)}
+        data.append(row_data)
+
+    return data
+
+def remove_unwanted_keys_from_grading_doc(grading_doc_dict):
+  keys_to_remove = ["Foundation level courses", "ASSIGNMENT DEADLINES:","Bonus Marks","Suggested pathway to register and study Foundation level courses:","Diploma Level courses","Suggested pathway to register and study Diploma level courses:","Diploma level courses","Degree Level courses","Annexure I"]
+  for key in grading_doc_dict.keys():
+    if (
+        key.strip()=="" # Key is empty
+        or
+      len(grading_doc_dict[key].strip().split())<=10 # Value has less than 10 words
+      ) and (key not in keys_to_remove): # if value is an empty string/list and key is still not in rejected list
+      keys_to_remove.append(key)
+
+  # print(len(keys_to_remove))
+
+  original_keys = grading_doc_dict.keys()
+  for key in keys_to_remove:
+    try:
+      if key in original_keys:
+        grading_doc_dict.pop(key)
+    except KeyError:
+      print(f"Key '{key}' not found in the dictionary.")
+
+  print("Keys removed from the grading documents dictionary")
+
+def remove_unwanted_keys_from_student_hand_doc(student_doc_dict):
+  keys_to_remove = []
+  for key in student_doc_dict.keys():
+    if (key.strip()=="" # Key is empty
+        or
+      len(student_doc_dict[key].strip().split())<=10 # Value has less than 10 words
+      ) and (key not in keys_to_remove): # if value is an empty string/list and key is still not in rejected list
+      keys_to_remove.append(key)
+
+  # print(len(keys_to_remove))
+
+  original_keys = student_doc_dict.keys()
+  for key in keys_to_remove:
+    try:
+      if key in original_keys:
+        student_doc_dict.pop(key)
+    except KeyError:
+      print(f"Key '{key}' not found in the dictionary.")
+
+  print("Keys removed from the student handbook dictionary")
+
+
+from bs4 import BeautifulSoup, NavigableString, Tag
+
+@lru_cache(maxsize=None)
+def extract_content_by_headers_with_tables(url, headers=("h1", "h2", "h3", "h4", "h5", "h6")):
     response = requests.get(url)
     html = response.text
-    cleaned_html = re.sub(r'<table.*?>.*?</table>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    soup = BeautifulSoup(html, 'html.parser')
+    content = {}
+    all_headers = soup.find_all(headers)
 
-    # Step 2: Parse with BeautifulSoup
-    soup = BeautifulSoup(cleaned_html, 'html.parser')
+    for i, header in enumerate(all_headers):
+        section_title = header.get_text(strip=False)
+        section_title = normalize(re.sub(r'^[^a-zA-Z]+', '', section_title)) # Remove leading non-alphabetic characters from the key
+        section_title = remove_unicode_escapes(section_title)
+        section_content = []
 
-    # Step 3: Extract chunks
-    chunks = {}
-    headers = soup.find_all(['h1', 'h2', 'h3'])
+        next_node = header.find_next_sibling()
+        while next_node and next_node not in all_headers:
+            if isinstance(next_node, Tag):
+                if next_node.name == "table":
+                    html_table_string = strip_html_attributes(str(next_node))
+                    # json_table = html_table_to_json(html_table_string)
+                    section_content.append(f"\n\n{str(html_table_string)}\n\n")  # preserve table HTML
+                else:
+                    # Gather only direct children text without duplication
+                    for child in next_node.children:
+                        if isinstance(child, NavigableString):
+                            text = child.strip()
+                            if text:
+                                section_content.append(text)
+                        elif isinstance(child, Tag) and child.name != "table":
+                            text = child.get_text(separator=' ', strip=True)
+                            if text:
+                                section_content.append(text)
+            next_node = next_node.find_next_sibling()
 
-    for i, header in enumerate(headers):
-        key = header.get_text(strip=True)
-        key =  remove_unicode_escapes(key).replace("\xa00","")
-        key = clean_string_before_first_alpha(key)
-    
-        content = []
+        # Join with space to avoid newlines, but keep HTML tables as-is
 
-        # Traverse next siblings until the next header
-        for sibling in header.find_next_siblings():
-            if sibling.name and sibling.name.lower() in ['h1', 'h2', 'h3']:
-                break
-            text = sibling.get_text(strip=True, separator=' ')
-            if text:
-                content.append(text)
-        value = remove_unicode_escapes(' '.join(content)).replace("&nbsp:","").replace("\u00a0","").replace("\u00b7","").replace("\u2014","").replace("\u00a0","").replace("\u2013","").replace("\u00a0","")
-        if len(value.strip()) != 0 and len(key.strip()) != 0:
-          chunks[key] = value
+        content[section_title] = ' '.join(section_content)
+        content[section_title] = normalize(re.sub(r'^[^a-zA-Z]+', '', content[section_title]))
+        content[section_title] = remove_unicode_escapes(content[section_title])
 
-    final_chunks = [f"Extract from student handbook:\n\n Heading: {key}:\t Content: {value}\n" for key, value in chunks.items()]
+    return content
 
-    return final_chunks
+# grading_doc_chunks = None  # Define at module level
 
 def create_vector_store_from_docs(student_handbook_url, grading_doc_url):
-    # pdf_chunks = create_pdf_chunks(pdf_path)
-    pdf_chunks = extract_chunks_for_student_handbook_by_header_without_tables(student_handbook_url)
-    # grading_doc_chunks = create_grading_doc_chunks(grading_doc_url)
-    new_grading_doc_chunks = extract_chunks_for_grading_doc_by_header_without_tables(grading_doc_url)
+    global grading_doc_chunks  # Declare as global
+    grading_doc_chunks = extract_content_by_headers_with_tables(grading_doc_url)
+    remove_unwanted_keys_from_grading_doc(grading_doc_chunks)
+    print(f"Extracted {len(grading_doc_chunks)} sections from the grading document.")
+    import json
+    with open("grading_doc_chunks.json", "w", encoding="utf-8") as f:
+        json.dump(grading_doc_chunks, f, ensure_ascii=False, indent=4)
+    student_handbook_chunks = extract_content_by_headers_with_tables(student_handbook_url)
+    remove_unwanted_keys_from_student_hand_doc(student_handbook_chunks)
+
+    grading_doc_final_chunks = list(grading_doc_chunks.keys())
+    student_handbook_final_chunks = [f"Extract from Student Handbook:\nHeading:{key}\nContent:{value}" for key, value in student_handbook_chunks.items()]
+
+    combinined_chunks = grading_doc_final_chunks + student_handbook_final_chunks
+
     hf_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vector_store = FAISS.from_texts(pdf_chunks + new_grading_doc_chunks, hf_embeddings)
-    return vector_store
+    vector_store = FAISS.from_texts(combinined_chunks, hf_embeddings)
+    return vector_store, grading_doc_chunks
 
 
 if __name__ == "__main__":

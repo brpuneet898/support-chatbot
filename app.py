@@ -29,11 +29,12 @@ def get_answer_from_llm():
         query = request.get_json().get("message")
         if not query.strip():
             return jsonify({"response": "Please provide a valid query."}), 400
-        answer = query_model_with_rag(query, vector_store)
+        answer = query_model_with_rag(query, vector_store, grading_doc_chunks)
+        print(f"Query: {query}\nAnswer: {answer}")
         return jsonify({"response": answer})
     except Exception as e:
         print(f"Error: {e}")
-        return jsonify({"response": "Response was not recieved because of an technical issue. Please contact support is issue persists."})
+        return jsonify({"response": "Response was not recieved because of an technical issue. Please contact support if issue persists."})
 
 @app.route('/login')
 def login():
@@ -79,10 +80,14 @@ if __name__ == '__main__':
         # Step 1: Create a vector store
         student_handbook_url = "https://docs.google.com/document/d/e/2PACX-1vRxGnnDCVAO3KX2CGtMIcJQuDrAasVk2JHbDxkjsGrTP5ShhZK8N6ZSPX89lexKx86QPAUswSzGLsOA/pub#h.104s7slbfmp7"
         grading_doc_url = "https://docs.google.com/document/d/e/2PACX-1vRBH1NuM3ML6MH5wfL2xPiPsiXV0waKlUUEj6C7LrHrARNUsAEA1sT2r7IHcFKi8hvQ45gSrREnFiTT/pub?urp=gmail_link"
-        vector_store = create_vector_store_from_docs(student_handbook_url, grading_doc_url)
+        vector_store, grading_doc_chunks = create_vector_store_from_docs(student_handbook_url, grading_doc_url)
         vector_store.save_local(vector_store_path)
     else:
         vector_store = load_vector_store(vector_store_path)
+        # Load grading_doc_chunks from file if needed
+        import json
+        with open("grading_doc_chunks.json", "r", encoding="utf-8") as f:
+            grading_doc_chunks = json.load(f)
 
     app.run(debug=True)
     # app.run(host='0.0.0.0', port=80, debug=True)
