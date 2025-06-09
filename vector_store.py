@@ -123,7 +123,7 @@ def strip_html_attributes(html_str):
     for tag in soup.find_all(True):  # True matches all tags
         tag.attrs = {}  # Remove all attributes
 
-    return str(soup).replace("<span>","").replace("</span>","").replace("</p></td>","</td").replace("<p><td>","<td>")
+    return str(soup).replace("<span>","").replace("</span>","").replace("</p></td>","</td>").replace("<p><td>","<td>")
 
 def normalize(text):
     # Replace any kind of whitespace (space, \xa0, tabs, etc.) with a single space
