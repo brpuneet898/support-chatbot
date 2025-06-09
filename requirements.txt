@@ -1,4 +1,8 @@
-flask 
+flask
+sentence-transformers
+langchain_core
+pandas
+PyPDF2 
 langchain 
 groq 
 transformers 
