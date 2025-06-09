@@ -130,7 +130,7 @@ def get_similar_queries(query, vector_store, k=5):
     
     return similar_queries
 
-def create_pdf_chunks(pdf_path, chunk_size=200, overlap=50): # This function will be used to chunk the Student Handbook
+def create_pdf_chunks(pdf_path, chunk_size=200, overlap=50): # This function will be used to chunk the Student Handbook # This function is rejected
     # Step 1: Convert PDF to text
     with open(pdf_path, "rb") as file:
         pdf_reader = PyPDF2.PdfReader(file)
@@ -168,62 +168,14 @@ def create_pdf_chunks(pdf_path, chunk_size=200, overlap=50): # This function wil
 
     return final_chunks
 
-def create_grading_doc_chunks(grading_doc_url): # We have used URL because it's much easier to chunk the grading doc from URL than from a PDF
-    # Step 1: Get the text from the URL
-    try:
-        response = requests.get(grading_doc_url)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-    except Exception as e:
-        print(f"Error fetching the URL: {e}")
-        return []
+def clean_string_before_first_alpha(s):
+    # Match the first alphabetical character and everything after it
+    match = re.search(r'[A-Za-z]', s)
+    if match:
+        return s[match.start():]
+    return s  # Return empty string if no alphabet is found
 
-    segments = []
-    current_segment = []
-
-    def traverse(node):
-        nonlocal segments, current_segment
-
-        if isinstance(node, NavigableString):
-            text = node.strip()
-            if text:
-                current_segment.append(text)
-        elif isinstance(node, Tag):
-            # Skip tags that typically don't contribute visible content
-            if node.name in ["script", "style"]:
-                return
-
-            if node.name == "table":
-                if current_segment:
-                    segments.append(" ".join(current_segment).replace("\xa0",""))
-                    current_segment.clear()
-                # Skip the children of the table entirely
-                return
-            else:
-                for child in node.children:
-                    traverse(child)
-
-    # If you know the main content is in a particular container, adjust this
-    start_node = soup.body if soup.body else soup
-    traverse(start_node)
-
-    if current_segment:
-        segments.append(" ".join(current_segment).replace("\xa0",""))
-    keep_indices = [i for i in range(len(segments)) if i not in (0, 1, 3)] # delete 0, 1, 3 indices
-    final_chunks = [segments[i] for i in keep_indices]
-    # D = {}
-    # for i,chunk in enumerate(final_chunks):
-    #     D[f"i"] = chunk
-    # with open("GD_chunks.json","w") as f:
-    #     json.dump(f, D, indent=4)
-
-    return final_chunks
-
-from bs4 import BeautifulSoup
-import requests
-import re
-
-def extract_chunks_by_header_without_tables(url):
+def extract_chunks_for_grading_doc_by_header_without_tables(url):
     # Step 1: Fetch and clean HTML
     response = requests.get(url)
     html = response.text
@@ -238,6 +190,9 @@ def extract_chunks_by_header_without_tables(url):
 
     for i, header in enumerate(headers):
         key = header.get_text(strip=True)
+        print(f"Uncleaned key = {key}")
+        key = clean_string_before_first_alpha(key)
+        print(f"cleaned key = {key}")
         content = []
 
         # Traverse next siblings until the next header
@@ -256,25 +211,68 @@ def extract_chunks_by_header_without_tables(url):
             keys_to_remove.append(key)
 
     for key in keys_to_remove:
-        chunks.pop(key)
+        if key in chunks:
+            chunks.pop(key)
 
     final_chunks = [f"Grading policy for {key}:\t {value}\n" for key, value in chunks.items()]
 
     return final_chunks
 
-def create_vector_store_from_docs(pdf_path, grading_doc_url):
-    pdf_chunks = create_pdf_chunks(pdf_path)
+def remove_unicode_escapes(text):
+    # Regex to match \u followed by exactly 4 hexadecimal digits
+    cleaned_text = re.sub(r'\\u[0-9a-fA-F]{4}', '', text)
+    return cleaned_text
+
+
+def extract_chunks_for_student_handbook_by_header_without_tables(url):
+    # Step 1: Fetch and clean HTML
+    response = requests.get(url)
+    html = response.text
+    cleaned_html = re.sub(r'<table.*?>.*?</table>', '', html, flags=re.DOTALL | re.IGNORECASE)
+
+    # Step 2: Parse with BeautifulSoup
+    soup = BeautifulSoup(cleaned_html, 'html.parser')
+
+    # Step 3: Extract chunks
+    chunks = {}
+    headers = soup.find_all(['h1', 'h2', 'h3'])
+
+    for i, header in enumerate(headers):
+        key = header.get_text(strip=True)
+        key =  remove_unicode_escapes(key).replace("\xa00","")
+        key = clean_string_before_first_alpha(key)
+    
+        content = []
+
+        # Traverse next siblings until the next header
+        for sibling in header.find_next_siblings():
+            if sibling.name and sibling.name.lower() in ['h1', 'h2', 'h3']:
+                break
+            text = sibling.get_text(strip=True, separator=' ')
+            if text:
+                content.append(text)
+        value = remove_unicode_escapes(' '.join(content)).replace("&nbsp:","").replace("\u00a0","").replace("\u00b7","").replace("\u2014","").replace("\u00a0","").replace("\u2013","").replace("\u00a0","")
+        if len(value.strip()) != 0 and len(key.strip()) != 0:
+          chunks[key] = value
+
+    final_chunks = [f"Extract from student handbook:\n\n Heading: {key}:\t Content: {value}\n" for key, value in chunks.items()]
+
+    return final_chunks
+
+def create_vector_store_from_docs(student_handbook_url, grading_doc_url):
+    # pdf_chunks = create_pdf_chunks(pdf_path)
+    pdf_chunks = extract_chunks_for_student_handbook_by_header_without_tables(student_handbook_url)
     # grading_doc_chunks = create_grading_doc_chunks(grading_doc_url)
-    new_grading_doc_chunks = extract_chunks_by_header_without_tables(grading_doc_url)
+    new_grading_doc_chunks = extract_chunks_for_grading_doc_by_header_without_tables(grading_doc_url)
     hf_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    vector_store = FAISS.from_texts(pdf_chunks+new_grading_doc_chunks, hf_embeddings)
+    vector_store = FAISS.from_texts(pdf_chunks + new_grading_doc_chunks, hf_embeddings)
     return vector_store
 
 
 if __name__ == "__main__":
-    pdf_path = "documents/Student_Handbook_latest.pdf"
-    grading_doc_url = "https://docs.google.com/document/d/e/2PACX-1vRBH1NuM3ML6MH5wfL2xPiPsiXV0waKlUUEj6C7LrHrARNUsAEA1sT2r7IHcFKi8hvQ45gSrREnFiTT/pub?urp=gmail_link"
-    latest_vector_store = create_vector_store_from_docs(pdf_path, grading_doc_url)
+    student_handbook_url = "https://docs.google.com/document/d/e/2PACX-1vRxGnnDCVAO3KX2CGtMIcJQuDrAasVk2JHbDxkjsGrTP5ShhZK8N6ZSPX89lexKx86QPAUswSzGLsOA/pub#h.104s7slbfmp7"
+    grading_doc_url = "https://docs.google.com/document/d/e/2PACX-1vRKOWaLjxsts3qAM4h00EDvlB-GYRSPqqVXTfq3nGWFQBx91roxcU1qGv2ksS7jT4EQPNo8Rmr2zaE9/pub#h.cbcq4ial1xkk"
+    latest_vector_store = create_vector_store_from_docs(student_handbook_url, grading_doc_url)
     vector_store_path = "LATEST_VECTOR_STORE"
     latest_vector_store.save_local(vector_store_path)
 

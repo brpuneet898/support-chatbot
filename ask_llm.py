@@ -1,7 +1,6 @@
 import os
 import PyPDF2
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain.text_splitter import CharacterTextSplitter
 from langchain.chains import RetrievalQA
 from langchain_community.document_loaders import TextLoader
 import torch
@@ -32,7 +31,7 @@ def query_model_with_rag(query, vector_store):
     relevant_content = [f"{i}: {doc.page_content}" for i, doc in enumerate(relevant_chunks, start=1)]
     context = "\n".join(relevant_content)
     # print(f" Recieved CONTEXT is {context}")
-    prompt = f'{system_prompt}\n\nContext:\n{context}\n\nQuestion:  {query} + "\nAnswer:'
+    prompt = f'{system_prompt}\n\nContext:\n{context}\n\nQuestion:  {query}\nAnswer:'
     # print("LENGTH OF PROMPT IN WORDS IS: ", len(prompt.split()))
     # with open("prompt.txt","w", encoding="utf-8") as f:
     #     f.write(prompt)

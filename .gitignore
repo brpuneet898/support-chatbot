@@ -1,6 +1,7 @@
-./env
+env/*
 ./documents
 ./__pycache__
 ./*.yaml
 ./TRASH/*
-.vercel
+prompt.txt
+./vector_store
